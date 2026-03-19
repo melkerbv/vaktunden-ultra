@@ -124,57 +124,11 @@ if st.session_state.auth['in']:
         st.markdown("<h1 style='text-align:center; color:#00ffcc;'>VAKTHUNDEN <span style='color:white'>TERMINAL</span></h1>", unsafe_allow_html=True)
         tabs = st.tabs(["🎯 SKANNER", "📊 ANALYS", "🛠️ ADMIN"])
 
-        # --- FLIK 1: SKANNER ---
+        # --- FLIK 1: SKANNER (UPPGRADERAD) ---
         with tabs[0]:
             st.subheader("RSI Algoritmisk Bevakning")
-            standard = ["BTC-USD", "ETH-USD", "SOL-USD", "TSLA", "AAPL", "INVE-B.ST", "VOLV-B.ST"]
-            saved = load_user_tickers(st.session_state.auth['user'])
-            valda = st.multiselect("Dina bolag:", options=list(set(standard + saved)), default=saved if saved else ["BTC-USD"])
             
-            c1, c2 = st.columns(2)
-            if c1.button("💾 SPARA LISTA"):
-                save_user_tickers(st.session_state.auth['user'], valda)
-                st.toast("Sparat!")
-            
-            if c2.button("🚀 KÖR SCAN"):
-                res = []
-                for t in valda:
-                    try:
-                        d = yf.Ticker(t).history(period="1y")['Close']
-                        delta = d.diff(); g = delta.where(delta > 0, 0).rolling(14).mean(); l = -delta.where(delta < 0, 0).rolling(14).mean()
-                        rsi = 100 - (100 / (1 + (g / l))).iloc[-1]
-                        res.append({"Ticker": t, "RSI": round(rsi, 1), "Signal": "🔥 KÖP" if rsi < 35 else ("🚨 SÄLJ" if rsi > 70 else "😴 VÄNTA")})
-                    except: continue
-                st.table(pd.DataFrame(res))
-
-        # --- FLIK 2: ANALYS ---
-        with tabs[1]:
-            st.subheader("Insider Flow & Marknadsdata")
-            col_l, col_r = st.columns([2, 1])
-            with col_l:
-                df_i = hämta_insider_data(30)
-                if not df_i.empty:
-                    st.dataframe(df_i[['Publiceringsdatum', 'Emittent', 'Person i ledande ställning', 'Kurs', 'Värde']].head(40), use_container_width=True, hide_index=True)
-            with col_r:
-                search = st.text_input("Ticker-graf:", "TSLA")
-                if search:
-                    h = yf.Ticker(search).history(period="6mo")
-                    fig = go.Figure(data=[go.Scatter(x=h.index, y=h['Close'], line=dict(color='#00ffcc'))])
-                    fig.update_layout(template="plotly_dark", height=300, margin=dict(l=0,r=0,t=0,b=0))
-                    st.plotly_chart(fig, use_container_width=True)
-
-        # --- FLIK 3: ADMIN ---
-        with tabs[2]:
-            if st.session_state.auth['role'] == 'admin':
-                st.subheader("Användarhantering")
-                conn = sqlite3.connect('vakthunden.db')
-                users = pd.read_sql_query("SELECT username, email, role, is_premium FROM users", conn)
-                st.dataframe(users, use_container_width=True)
-                target = st.text_input("Uppgradera användare:")
-                if st.button("GE PREMIUM"):
-                    conn.execute("UPDATE users SET is_premium = 1 WHERE username = ?", (target,))
-                    conn.commit(); st.success(f"{target} uppgraderad!"); st.rerun()
-                conn.close()
-            else: st.warning("Endast för Admin.")
-else:
-    st.info("🐺 Välkommen! Logga in eller skapa ett konto för att låsa upp terminalen.")
+            # Tung standardlista
+            standard = [
+                "BTC-USD", "ETH-USD", "SOL-USD", "ADA-USD", "XRP-USD", "LINK-USD", "AVAX-USD", # Krypto / Web3
+                "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "TSLA", "META", "MSTR", "
