@@ -14,7 +14,14 @@ def init_db():
     conn = sqlite3.connect('vakthunden.db')
     c = conn.cursor()
     c.execute("CREATE TABLE IF NOT EXISTS users(username TEXT PRIMARY KEY, email TEXT, password TEXT, role TEXT DEFAULT 'user')")
-    c.execute("CREATE TABLE IF NOT EXISTS holdings(username TEXT, ticker TEXT, amount REAL, buy_price REAL, currency TEXT)")
+    c.execute("CREATE TABLE IF NOT EXISTS holdings(username TEXT, ticker TEXT, amount REAL, buy_price REAL)")
+    
+    # FIX: Tvinga tillägg av kolumnen 'currency' om den saknas i en gammal databas
+    try:
+        c.execute("ALTER TABLE holdings ADD COLUMN currency TEXT DEFAULT 'SEK'")
+    except:
+        pass # Kolumnen finns redan
+        
     conn.commit()
     conn.close()
 
@@ -30,7 +37,14 @@ def get_holdings(u):
 def add_holding(u, t, a, p, cur):
     conn = sqlite3.connect('vakthunden.db')
     c = conn.cursor()
-    c.execute("INSERT INTO holdings VALUES (?, ?, ?, ?, ?)", (u, t.upper(), a, p, cur))
+    c.execute("INSERT INTO holdings (username, ticker, amount, buy_price, currency) VALUES (?, ?, ?, ?, ?)", (u, t.upper(), a, p, cur))
+    conn.commit()
+    conn.close()
+
+def delete_holding(u, t):
+    conn = sqlite3.connect('vakthunden.db')
+    c = conn.cursor()
+    c.execute("DELETE FROM holdings WHERE username = ? AND ticker = ?", (u, t))
     conn.commit()
     conn.close()
 
@@ -48,12 +62,14 @@ with st.sidebar:
         if st.button("Kör"):
             conn = sqlite3.connect('vakthunden.db'); c = conn.cursor()
             if action == "Skapa konto":
-                role = 'admin' if c.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0 else 'user'
-                c.execute("INSERT INTO users(username, password, role) VALUES (?,?,?)", (u, make_hashes(p), role))
-                conn.commit(); st.session_state.auth = {'in': True, 'user': u, 'role': role}; st.rerun()
+                if u and p:
+                    role = 'admin' if c.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0 else 'user'
+                    c.execute("INSERT INTO users(username, password, role) VALUES (?,?,?)", (u, make_hashes(p), role))
+                    conn.commit(); st.session_state.auth = {'in': True, 'user': u, 'role': role}; st.rerun()
             else:
                 d = c.execute("SELECT password, role FROM users WHERE username =?", (u,)).fetchone()
                 if d and check_hashes(p, d[0]): st.session_state.auth = {'in': True, 'user': u, 'role': d[1]}; st.rerun()
+                else: st.error("Fel inloggning")
             conn.close()
     else:
         st.write(f"Inloggad som: **{st.session_state.auth['user']}**")
@@ -68,13 +84,13 @@ if st.session_state.auth['in']:
         
         with st.expander("➕ Lägg till innehav"):
             c1, c2, c3, c4 = st.columns(4)
-            t = c1.text_input("Ticker (t.ex. SEB-A.ST eller BTC-USD)")
-            a = c2.number_input("Antal", min_value=0.0)
-            p = c3.number_input("Inköpspris", min_value=0.0)
-            cur = c4.selectbox("Valuta", ["SEK", "USD"])
+            t_input = c1.text_input("Ticker (t.ex. SEB-A.ST eller BTC-USD)")
+            a_input = c2.number_input("Antal", min_value=0.0)
+            p_input = c3.number_input("Inköpspris", min_value=0.0)
+            cur_input = c4.selectbox("Valuta", ["SEK", "USD"])
             if st.button("Spara"):
-                add_holding(st.session_state.auth['user'], t, a, p, cur)
-                st.rerun()
+                add_holding(st.session_state.auth['user'], t_input, a_input, p_input, cur_input)
+                st.success("Sparat!"); st.rerun()
 
         df = get_holdings(st.session_state.auth['user'])
         if not df.empty:
@@ -83,21 +99,21 @@ if st.session_state.auth['in']:
             
             for _, row in df.iterrows():
                 try:
-                    data = yf.Ticker(row['ticker']).fast_info
-                    price = data['lastPrice']
-                    # FIx för svenska ören om yfinance spökar
+                    t_info = yf.Ticker(row['ticker']).fast_info
+                    price = t_info['lastPrice']
+                    
+                    # Fix för SEK-aktier som ibland visas i ören
                     if ".ST" in row['ticker'] and price > 1000: price = price / 100
                     
                     value = price * row['amount']
                     profit = value - (row['buy_price'] * row['amount'])
                     
-                    with st.container():
-                        col1, col2, col3, col4 = st.columns([1,1,1,1])
-                        col1.write(f"**{row['ticker']}**")
-                        col2.metric("Pris", f"{price:.2f} {row['currency']}")
-                        col3.metric("Värde", f"{value:,.0f} {row['currency']}")
-                        col4.metric("Vinst/Förlust", f"{profit:,.0f} {row['currency']}", f"{(profit/(row['buy_price']*row['amount'])*100):+.2f}%")
-                        st.divider()
+                    col1, col2, col3, col4 = st.columns([1,1,1,1])
+                    col1.write(f"**{row['ticker']}**")
+                    col2.metric("Pris", f"{price:.2f} {row['currency']}")
+                    col3.metric("Värde", f"{value:,.0f} {row['currency']}")
+                    col4.metric("Vinst/Förlust", f"{profit:,.0f} {row['currency']}", f"{(profit/(row['buy_price']*row['amount'])*100):+.2f}%")
+                    st.divider()
                         
                     if row['currency'] == "SEK": total_sek += value
                     else: total_usd += value
@@ -106,9 +122,15 @@ if st.session_state.auth['in']:
 
             st.subheader("Total sammanställning")
             st.info(f"💰 Totalt SEK: **{total_sek:,.0f}** | 💵 Totalt USD: **{total_usd:,.0f}**")
+            
+            st.write("---")
+            del_ticker = st.selectbox("Ta bort innehav:", df['ticker'].tolist())
+            if st.button("Radera markerad"):
+                delete_holding(st.session_state.auth['user'], del_ticker)
+                st.rerun()
         else:
             st.write("Tom portfölj.")
 
 else:
     st.title("VAKTHUNDEN ULTRA")
-    st.write("Logga in för att hantera ditt innehav.")
+    st.write("Logga in för att hantera din portfölj.")
