@@ -3,8 +3,6 @@ import pandas as pd
 import yfinance as yf
 import sqlite3
 import hashlib
-import requests
-import io
 import plotly.graph_objects as go
 from datetime import datetime as dt, timedelta as td
 
@@ -15,37 +13,30 @@ def make_hashes(p): return hashlib.sha256(str.encode(p)).hexdigest()
 def check_hashes(p, h): return make_hashes(p) == h
 
 def init_db():
-    conn = sqlite3.connect('vakthunden.db')
-    c = conn.cursor()
+    conn = sqlite3.connect('vakthunden.db'); c = conn.cursor()
     c.execute("CREATE TABLE IF NOT EXISTS users(username TEXT PRIMARY KEY, password TEXT, role TEXT DEFAULT 'user')")
     c.execute("CREATE TABLE IF NOT EXISTS holdings(username TEXT, ticker TEXT, amount REAL, buy_price REAL, currency TEXT)")
     try: c.execute("ALTER TABLE holdings ADD COLUMN currency TEXT DEFAULT 'SEK'")
     except: pass
-    conn.commit()
-    conn.close()
+    conn.commit(); conn.close()
 
 init_db()
 
-# --- HELPER FUNCTIONS ---
+# --- HELPERS ---
 def get_holdings(u):
     conn = sqlite3.connect('vakthunden.db')
     df = pd.read_sql_query("SELECT ticker, amount, buy_price, currency FROM holdings WHERE username = ?", conn, params=(u,))
-    conn.close()
-    return df
+    conn.close(); return df
 
 def add_holding(u, t, a, p, cur):
-    conn = sqlite3.connect('vakthunden.db')
-    c = conn.cursor()
-    c.execute("INSERT INTO holdings (username, ticker, amount, buy_price, currency) VALUES (?, ?, ?, ?, ?)", (u, t.upper(), a, p, cur))
-    conn.commit()
-    conn.close()
+    conn = sqlite3.connect('vakthunden.db'); c = conn.cursor()
+    c.execute("INSERT INTO holdings (username, ticker, amount, buy_price, currency) VALUES (?, ?, ?, ?, ?)", (u, t.upper().strip(), a, p, cur))
+    conn.commit(); conn.close()
 
 def delete_holding(u, t):
-    conn = sqlite3.connect('vakthunden.db')
-    c = conn.cursor()
+    conn = sqlite3.connect('vakthunden.db'); c = conn.cursor()
     c.execute("DELETE FROM holdings WHERE username = ? AND ticker = ?", (u, t))
-    conn.commit()
-    conn.close()
+    conn.commit(); conn.close()
 
 @st.cache_data(ttl=300)
 def get_market_data():
@@ -55,17 +46,14 @@ def get_market_data():
         try:
             h = yf.Ticker(ticker).history(period="2d")
             if len(h) > 1:
-                curr = h['Close'].iloc[-1]
-                prev = h['Close'].iloc[-2]
+                curr, prev = h['Close'].iloc[-1], h['Close'].iloc[-2]
                 res[name] = {"val": curr, "pct": ((curr - prev) / prev) * 100}
         except: res[name] = None
     return res
 
-# --- SESSION STATE ---
-if 'auth' not in st.session_state:
-    st.session_state.auth = {'in': False, 'user': None, 'role': 'user'}
+# --- SESSION ---
+if 'auth' not in st.session_state: st.session_state.auth = {'in': False, 'user': None, 'role': 'user'}
 
-# --- SIDEBAR ---
 with st.sidebar:
     st.title("🐺 VAKTHUNDEN")
     if not st.session_state.auth['in']:
@@ -87,29 +75,27 @@ with st.sidebar:
         st.success(f"Inloggad: {st.session_state.auth['user']}")
         if st.button("Logga ut"): st.session_state.auth = {'in': False}; st.rerun()
 
-# --- MAIN APP ---
+# --- MAIN ---
 if st.session_state.auth['in']:
     t1, t2, t3 = st.tabs(["🏠 ÖVERSIKT", "💰 PORTFÖLJ", "🎯 SCANNER"])
 
     with t1:
-        st.subheader("Marknaden Just Nu")
+        st.subheader("Marknadsläget")
         m_data = get_market_data()
-        cols = st.columns(len(m_data))
+        cols = st.columns(4)
         for i, (name, d) in enumerate(m_data.items()):
             if d: cols[i].metric(name, f"{d['val']:,.2f}", f"{d['pct']:+.2f}%")
-        
         st.divider()
-        st.subheader("Senaste Nyheterna (Market Watch)")
+        st.subheader("Finansnyheter")
         try:
-            news = yf.Ticker("SPY").news[:5]
-            for n in news: st.markdown(f"🔹 **[{n['title']}]({n['link']})**")
-        except: st.info("Kunde inte ladda nyheter just nu.")
+            for n in yf.Ticker("SPY").news[:5]: st.markdown(f"🔹 **[{n['title']}]({n['link']})**")
+        except: st.write("Nyheter tillfälligt otillgängliga.")
 
     with t2:
         st.header("Din Portfölj")
         with st.expander("➕ Lägg till innehav"):
             c1, c2, c3, c4 = st.columns(4)
-            tick = c1.text_input("Ticker (t.ex. SEB-A.ST)")
+            tick = c1.text_input("Ticker (t.ex. INVE-B.ST eller BTC-USD)")
             amnt = c2.number_input("Antal", min_value=0.0)
             b_pr = c3.number_input("Inköpspris", min_value=0.0)
             curr = c4.selectbox("Valuta", ["SEK", "USD"])
@@ -127,7 +113,6 @@ if st.session_state.auth['in']:
                     val = price * row['amount']
                     pnl = val - (row['buy_price'] * row['amount'])
                     pnl_p = (pnl/(row['buy_price']*row['amount'])*100) if row['buy_price']>0 else 0
-                    
                     c1, c2, c3, c4 = st.columns([1,1,1,1])
                     c1.write(f"**{row['ticker']}**")
                     c2.metric("Pris", f"{price:.2f}")
@@ -135,31 +120,28 @@ if st.session_state.auth['in']:
                     c4.metric("PNL", f"{pnl:,.0f}", f"{pnl_p:+.2f}%")
                     if row['currency'] == "SEK": s_tot += val
                     else: u_tot += val
-                except: st.error(f"Fel på {row['ticker']}")
+                except: st.error(f"Kunde inte hämta data för {row['ticker']}. Använd t.ex. INVE-B.ST")
             st.divider()
-            st.info(f"Totalt: {s_tot:,.0f} SEK | {u_tot:,.0f} USD")
-            
-            target = st.selectbox("Ta bort:", df['ticker'].tolist())
+            st.info(f"Sammanlagt: {s_tot:,.0f} SEK | {u_tot:,.0f} USD")
+            target = st.selectbox("Radera innehav:", df['ticker'].tolist())
             if st.button("Radera"): delete_holding(st.session_state.auth['user'], target); st.rerun()
+        else: st.info("Portföljen är tom.")
 
     with t3:
-        st.subheader("RSI Scanner - Hitta köplägen")
-        tickers = st.text_area("Ange tickers (separera med komma):", "AAPL,TSLA,BTC-USD,SEB-A.ST,VOLV-B.ST").split(",")
-        if st.button("Starta Skanning"):
-            results = []
-            for t in [x.strip().upper() for x in tickers]:
+        st.subheader("RSI Scanner")
+        watch = st.text_area("Tickers (komma-separerade):", "AAPL,TSLA,BTC-USD,INVE-B.ST,VOLV-B.ST")
+        if st.button("Skanna nu"):
+            res = []
+            for t in [x.strip().upper() for x in watch.split(",")]:
                 try:
-                    data = yf.Ticker(t).history(period="1y")['Close']
-                    if len(data) > 14:
-                        delta = data.diff()
-                        up = delta.clip(lower=0).rolling(14).mean()
-                        down = -delta.clip(upper=0).rolling(14).mean()
+                    d = yf.Ticker(t).history(period="1y")['Close']
+                    if len(d) > 14:
+                        delta = d.diff(); up = delta.clip(lower=0).rolling(14).mean(); down = -delta.clip(upper=0).rolling(14).mean()
                         rsi = 100 - (100 / (1 + (up/down))).iloc[-1]
-                        results.append({"Ticker": t, "RSI": round(rsi, 2), "Status": "ÖVERSÅLD (KÖP)" if rsi < 30 else ("ÖVERKÖPT (SÄLJ)" if rsi > 70 else "NEUTRAL")})
+                        res.append({"Ticker": t, "RSI": round(rsi, 2), "Status": "KÖP" if rsi < 30 else ("SÄLJ" if rsi > 70 else "NEUTRAL")})
                 except: continue
-            if results: st.table(pd.DataFrame(results))
-            else: st.warning("Ingen data hittades.")
+            st.table(pd.DataFrame(res)) if res else st.warning("Ingen data hittades.")
 
 else:
-    st.title("🐺 VAKTHUNDEN ULTRA")
-    st.info("Logga in för full tillgång till verktygen.")
+    st.title("VAKTHUNDEN ULTRA")
+    st.write("Logga in i sidomenyn för att använda terminalen.")
