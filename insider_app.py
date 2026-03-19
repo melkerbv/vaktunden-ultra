@@ -6,6 +6,8 @@ from email.mime.text import MIMEText
 from datetime import datetime as dt, timedelta as td
 
 # --- 1. SÄKERHET & DATABAS ---
+st.set_page_config(page_title="Vakthunden ULTRA", layout="wide")
+
 def make_hashes(password):
     return hashlib.sha256(str.encode(password)).hexdigest()
 
@@ -20,20 +22,25 @@ def init_db():
                  role TEXT DEFAULT 'user', is_premium INTEGER DEFAULT 0,
                  is_verified INTEGER DEFAULT 0, verification_code TEXT)''')
     c.execute('CREATE TABLE IF NOT EXISTS user_tickers(username TEXT, ticker TEXT)')
-    conn.commit(); conn.close()
+    conn.commit()
+    conn.close()
 
-# --- 2. HJÄLPFUNKTIONER (Mail & Tickers) ---
+init_db()
+
+# --- 2. HJÄLPFUNKTIONER (Mail & Databas) ---
 def send_verification_email(receiver_email, code):
     try:
         sender = st.secrets["EMAIL_USER"]
         password = st.secrets["EMAIL_PASS"]
-        msg = MIMEText(f"Din unika verifieringskod för Vakthunden ULTRA: {code}")
-        msg['Subject'] = '🔑 Verifiera ditt konto'; msg['From'] = sender; msg['To'] = receiver_email
+        msg = MIMEText(f"Välkommen till Vakthunden ULTRA!\n\nDin unika upplåsningskod är: {code}")
+        msg['Subject'] = '🔑 Verifiera din inloggning'; msg['From'] = sender; msg['To'] = receiver_email
         server = smtplib.SMTP('smtp.mail.me.com', 587)
         server.starttls(); server.login(sender, password)
         server.sendmail(sender, receiver_email, msg.as_string()); server.quit()
         return True
-    except: return False
+    except Exception as e:
+        print(f"Mail-error: {e}")
+        return False
 
 def load_user_tickers(username):
     conn = sqlite3.connect('vakthunden.db'); c = conn.cursor()
@@ -47,54 +54,169 @@ def save_user_tickers(username, tickers):
     for t in tickers: c.execute("INSERT INTO user_tickers VALUES (?, ?)", (username, t))
     conn.commit(); conn.close()
 
-# --- 3. ANALYS-MOTOR (Insider-data) ---
+# --- 3. ANALYS-MOTOR ---
 @st.cache_data(ttl=900)
 def hämta_insider_data(dagar):
     try:
-        start_date = (dt.now() - td(days=dagar)).strftime('%Y-%m-%d')
-        url = f"https://marknadssok.fi.se/Publiceringsklient/sv-SE/Search/Search?SearchFunctionType=Insyn&button=export&Format=CSV&From={start_date}"
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        r = requests.get(url, headers=headers, timeout=40)
+        start = (dt.now() - td(days=dagar)).strftime('%Y-%m-%d')
+        url = f"https://marknadssok.fi.se/Publiceringsklient/sv-SE/Search/Search?SearchFunctionType=Insyn&button=export&Format=CSV&From={start}"
+        r = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=40)
         if r.status_code != 200: return pd.DataFrame()
         df = pd.read_csv(io.StringIO(r.content.decode('utf-16le')), sep=';')
         df.columns = df.columns.str.strip()
-        def clean_val(v): return float(re.sub(r'[^\d,]', '', str(v)).replace(',', '.')) if pd.notna(v) else 0
-        df['Kurs_Num'] = df['Pris'].apply(clean_val)
-        df['Volym_Num'] = df['Volym'].apply(clean_val)
+        def cln(v): return float(re.sub(r'[^\d,]', '', str(v)).replace(',', '.')) if pd.notna(v) else 0
+        df['Kurs_Num'] = df['Pris'].apply(cln); df['Volym_Num'] = df['Volym'].apply(cln)
         df['Kurs'] = df['Kurs_Num'].apply(lambda x: f"{x:,.2f} kr".replace(',', ' '))
         df['Värde'] = (df['Volym_Num'] * df['Kurs_Num']).apply(lambda x: f"{x:,.0f} kr".replace(',', ' '))
         return df.sort_values('Publiceringsdatum', ascending=False)
     except: return pd.DataFrame()
 
-# --- 4. UI SETUP ---
-st.set_page_config(page_title="Vakthunden ULTRA", layout="wide")
-init_db()
-
+# --- 4. SESSION HANTERING ---
 if 'auth' not in st.session_state:
     st.session_state.auth = {'in': False, 'user': None, 'role': 'user', 'prem': False, 'ver': False}
 
-# --- 5. SIDOPANEL ---
+# --- 5. SIDOPANEL (SÖMLÖS UX) ---
 with st.sidebar:
     st.title("🐺 VAKTHUNDEN")
+    
     if not st.session_state.auth['in']:
-        menu = st.radio("MENY", ["Logga in", "Skapa konto"])
-        u = st.text_input("Användarnamn")
-        if menu == "Skapa konto":
-            em = st.text_input("E-post")
+        action = st.radio("Välj alternativ:", ["Logga in", "Skapa konto"])
+        st.divider()
+        u = st.text_input("Användarnamn").strip()
+        
+        if action == "Skapa konto":
+            em = st.text_input("E-post").strip()
             p1 = st.text_input("Lösenord", type="password")
-            if st.button("Registrera"):
-                conn = sqlite3.connect('vakthunden.db'); c = conn.cursor()
-                code = str(random.randint(100000, 999999))
-                c.execute('SELECT COUNT(*) FROM users'); role = 'admin' if c.fetchone()[0] == 0 else 'user'
-                try:
-                    c.execute('INSERT INTO users(username, email, password, role, verification_code) VALUES (?,?,?,?,?)', (u, em, make_hashes(p1), role, code))
-                    conn.commit(); conn.close()
-                    send_verification_email(em, code)
-                    st.success("Konto skapat! Kolla din mail.")
-                except: st.error("Namnet upptaget.")
+            if st.button("Skapa Mitt Konto"):
+                if u and em and p1:
+                    conn = sqlite3.connect('vakthunden.db'); c = conn.cursor()
+                    code = str(random.randint(100000, 999999))
+                    c.execute('SELECT COUNT(*) FROM users')
+                    role = 'admin' if c.fetchone()[0] == 0 else 'user'
+                    try:
+                        c.execute('INSERT INTO users(username, email, password, role, verification_code) VALUES (?,?,?,?,?)', 
+                                  (u, em, make_hashes(p1), role, code))
+                        conn.commit(); conn.close()
+                        send_verification_email(em, code)
+                        
+                        # Auto-Login Magi
+                        st.session_state.auth = {'in': True, 'user': u, 'role': role, 'prem': False, 'ver': False}
+                        st.rerun()
+                    except: st.error("Användarnamnet är redan taget.")
+                else: st.warning("Fyll i alla fält.")
         else:
             p = st.text_input("Lösenord", type="password")
             if st.button("Logga in"):
                 conn = sqlite3.connect('vakthunden.db'); c = conn.cursor()
                 c.execute('SELECT password, role, is_premium, is_verified FROM users WHERE username =?', (u,))
                 data = c.fetchone(); conn.close()
+                if data and check_hashes(p, data[0]):
+                    st.session_state.auth = {'in': True, 'user': u, 'role': data[1], 'prem': bool(data[2]), 'ver': bool(data[3])}
+                    st.rerun()
+                else: st.error("Fel inloggningsuppgifter.")
+    else:
+        st.success(f"Inloggad: {st.session_state.auth['user']}")
+        if st.button("Logga ut"):
+            st.session_state.auth = {'in': False, 'user': None, 'role': 'user', 'prem': False, 'ver': False}
+            st.rerun()
+
+# --- 6. HUVUDINNEHÅLL ---
+if st.session_state.auth['in']:
+    
+    # KONTROLL: Är kontot verifierat?
+    if not st.session_state.auth['ver']:
+        st.markdown("<h2 style='text-align:center;'>📩 Ett sista steg...</h2>", unsafe_allow_html=True)
+        st.info(f"Vi har skickat en 6-siffrig kod till din e-post. Skriv in den nedan för att låsa upp terminalen.")
+        
+        col1, col2, col3 = st.columns([1,2,1])
+        with col2:
+            code_in = st.text_input("Verifieringskod:", placeholder="123456")
+            if st.button("Lås upp Vakthunden", use_container_width=True):
+                conn = sqlite3.connect('vakthunden.db'); c = conn.cursor()
+                c.execute('SELECT verification_code FROM users WHERE username = ?', (st.session_state.auth['user'],))
+                res = c.fetchone()
+                if res and res[0] == code_in.strip():
+                    c.execute('UPDATE users SET is_verified = 1 WHERE username = ?', (st.session_state.auth['user'],))
+                    conn.commit(); conn.close()
+                    st.session_state.auth['ver'] = True
+                    st.rerun()
+                else: st.error("Fel kod, försök igen.")
+    
+    # TERMINALEN (Öppen)
+    else:
+        st.markdown("<h1 style='text-align:center; color:#00ffcc;'>VAKTHUNDEN <span style='color:white'>ULTRA</span></h1>", unsafe_allow_html=True)
+        tabs = st.tabs(["🎯 SKANNER", "📊 ANALYS", "🛠️ ADMIN"])
+
+        # FLIK 1: SKANNER
+        with tabs[0]:
+            st.subheader("RSI Algoritmisk Bevakning")
+            standard = ["BTC-USD", "ETH-USD", "SOL-USD", "ADA-USD", "XRP-USD", "LINK-USD", "AVAX-USD", "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "TSLA", "META", "MSTR", "COIN", "INVE-B.ST", "VOLV-B.ST", "SEB-A.ST", "HM-B.ST", "SWED-A.ST", "AZN.ST", "EVO.ST"]
+            saved = load_user_tickers(st.session_state.auth['user'])
+            alla_alternativ = list(set(standard + saved))
+            
+            c_m, c_n = st.columns([2, 1])
+            with c_m: valda = st.multiselect("Välj bolag:", options=alla_alternativ, default=saved if saved else ["BTC-USD"])
+            with c_n:
+                ny_t = st.text_input("Saknas bolag? Lägg till Ticker:").upper().strip()
+                if st.button("➕ Lägg till") and ny_t:
+                    if ny_t not in valda:
+                        valda.append(ny_t); save_user_tickers(st.session_state.auth['user'], valda); st.rerun()
+            
+            st.write("")
+            c1, c2 = st.columns(2)
+            if c1.button("💾 SPARA BEVAKNINGSLISTA"):
+                save_user_tickers(st.session_state.auth['user'], valda)
+                st.toast("Sparat!")
+            
+            if c2.button("🚀 KÖR FULL SCAN"):
+                res = []
+                with st.spinner("Analyserar marknaden..."):
+                    for t in valda:
+                        try:
+                            d = yf.Ticker(t).history(period="1y")['Close']
+                            if len(d) > 14:
+                                delta = d.diff(); g = delta.where(delta > 0, 0).rolling(14).mean(); l = -delta.where(delta < 0, 0).rolling(14).mean()
+                                rsi = 100 - (100 / (1 + (g / l))).iloc[-1]
+                                res.append({"Ticker": t, "RSI": round(rsi, 1), "Signal": "🔥 KÖP" if rsi < 35 else ("🚨 SÄLJ" if rsi > 70 else "😴 VÄNTA")})
+                        except: continue
+                if res: st.table(pd.DataFrame(res).sort_values("RSI"))
+                else: st.error("Fel vid hämtning av data.")
+
+        # FLIK 2: ANALYS
+        with tabs[1]:
+            st.subheader("Insider Flow & Data")
+            col_l, col_r = st.columns([2, 1])
+            with col_l:
+                df_i = hämta_insider_data(30)
+                if not df_i.empty:
+                    st.dataframe(df_i[['Publiceringsdatum', 'Emittent', 'Person i ledande ställning', 'Kurs', 'Värde']].head(40), use_container_width=True, hide_index=True)
+            with col_r:
+                search = st.text_input("Ticker-graf:", "INVE-B.ST")
+                if search:
+                    h = yf.Ticker(search).history(period="6mo")
+                    if not h.empty:
+                        fig = go.Figure(data=[go.Scatter(x=h.index, y=h['Close'], line=dict(color='#00ffcc'))])
+                        fig.update_layout(template="plotly_dark", height=300, margin=dict(l=0,r=0,t=0,b=0))
+                        st.plotly_chart(fig, use_container_width=True)
+
+        # FLIK 3: ADMIN
+        with tabs[2]:
+            if st.session_state.auth['role'] == 'admin':
+                st.subheader("Systemhantering")
+                conn = sqlite3.connect('vakthunden.db')
+                users = pd.read_sql_query("SELECT username, email, role, is_premium, is_verified FROM users", conn)
+                st.dataframe(users, use_container_width=True)
+                target = st.text_input("Uppgradera användare (skriv användarnamn):")
+                if st.button("GE PREMIUM"):
+                    conn.execute("UPDATE users SET is_premium = 1 WHERE username = ?", (target,))
+                    conn.commit(); st.success(f"{target} uppgraderad!"); st.rerun()
+                conn.close()
+            else: st.warning("Åtkomst nekad. Kräver admin-rättigheter.")
+
+else:
+    st.markdown("""
+    <div style='text-align: center; margin-top: 50px;'>
+        <h1>Välkommen till Vakthunden</h1>
+        <p>Logga in eller skapa ett konto i menyn till vänster för att starta din terminal.</p>
+    </div>
+    """, unsafe_allow_html=True)
