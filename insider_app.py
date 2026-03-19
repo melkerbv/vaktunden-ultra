@@ -98,37 +98,3 @@ with st.sidebar:
                 conn = sqlite3.connect('vakthunden.db'); c = conn.cursor()
                 c.execute('SELECT password, role, is_premium, is_verified FROM users WHERE username =?', (u,))
                 data = c.fetchone(); conn.close()
-                if data and check_hashes(p, data[0]):
-                    st.session_state.auth = {'in': True, 'user': u, 'role': data[1], 'prem': bool(data[2]), 'ver': bool(data[3])}
-                    st.rerun()
-                else: st.error("Fel inloggning.")
-    else:
-        st.success(f"Inloggad: {st.session_state.auth['user']}")
-        if st.button("Logga ut"): st.session_state.auth['in'] = False; st.rerun()
-
-# --- 6. HUVUDINNEHÅLL ---
-if st.session_state.auth['in']:
-    if not st.session_state.auth['ver']:
-        st.warning("📩 Verifiera ditt konto")
-        code_in = st.text_input("Skriv koden från mailet:")
-        if st.button("Aktivera"):
-            conn = sqlite3.connect('vakthunden.db'); c = conn.cursor()
-            c.execute('SELECT verification_code FROM users WHERE username = ?', (st.session_state.auth['user'],))
-            res = c.fetchone()
-            if res and res[0] == code_in:
-                c.execute('UPDATE users SET is_verified = 1 WHERE username = ?', (st.session_state.auth['user'],))
-                conn.commit(); conn.close()
-                st.session_state.auth['ver'] = True; st.rerun()
-            else: st.error("Fel kod.")
-    else:
-        st.markdown("<h1 style='text-align:center; color:#00ffcc;'>VAKTHUNDEN <span style='color:white'>TERMINAL</span></h1>", unsafe_allow_html=True)
-        tabs = st.tabs(["🎯 SKANNER", "📊 ANALYS", "🛠️ ADMIN"])
-
-        # --- FLIK 1: SKANNER (UPPGRADERAD) ---
-        with tabs[0]:
-            st.subheader("RSI Algoritmisk Bevakning")
-            
-            # Tung standardlista
-            standard = [
-                "BTC-USD", "ETH-USD", "SOL-USD", "ADA-USD", "XRP-USD", "LINK-USD", "AVAX-USD", # Krypto / Web3
-                "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "TSLA", "META", "MSTR", "
