@@ -44,7 +44,7 @@ def send_verification_email(receiver_email, code):
         server.quit()
         return True
     except:
-        return False # Fångar felet tyst så appen inte dör
+        return False
 
 # --- 3. DATABAS-HJÄLPARE ---
 def load_user_tickers(username):
@@ -103,12 +103,10 @@ with st.sidebar:
                     conn = sqlite3.connect('vakthunden.db')
                     c = conn.cursor()
                     
-                    # KOLL 1: Finns namnet redan?
                     c.execute('SELECT username FROM users WHERE username = ?', (u,))
                     if c.fetchone():
                         st.error("Namnet är taget. Välj ett annat eller logga in.")
                     else:
-                        # KOLL 2: Skapa kontot
                         code = str(random.randint(100000, 999999))
                         c.execute('SELECT COUNT(*) FROM users')
                         role = 'admin' if c.fetchone()[0] == 0 else 'user'
@@ -118,12 +116,10 @@ with st.sidebar:
                         conn.commit()
                         conn.close()
                         
-                        # KOLL 3: Skicka mail (Fail-safe)
                         mail_success = send_verification_email(em, code)
                         if not mail_success:
                             st.session_state['emergency_code'] = code
                             
-                        # KOLL 4: Auto-Login
                         st.session_state.auth = {'in': True, 'user': u, 'role': role, 'prem': False, 'ver': False}
                         st.rerun()
                 else:
@@ -148,12 +144,10 @@ with st.sidebar:
 # --- 7. HUVUDINNEHÅLL ---
 if st.session_state.auth['in']:
     
-    # 7.1 VERIFIERINGSSKÄRM
     if not st.session_state.auth['ver']:
         st.markdown("<h2 style='text-align:center;'>📩 Lås upp din terminal</h2>", unsafe_allow_html=True)
         st.info("Vi har skickat en 6-siffrig kod till din e-post. Skriv in den nedan.")
         
-        # Nödkod om mailet failar
         if 'emergency_code' in st.session_state:
             st.error("⚠️ Servern kunde inte skicka mailet (säkerhetsblockad från din mailleverantör).")
             st.success(f"**DIN NÖDKOD ÄR: {st.session_state['emergency_code']}**")
@@ -173,7 +167,6 @@ if st.session_state.auth['in']:
                 else:
                     st.error("Fel kod, testa igen.")
                     
-    # 7.2 TERMINALEN (ÖPPEN)
     else:
         st.markdown("<h1 style='text-align:center; color:#00ffcc;'>VAKTHUNDEN <span style='color:white'>ULTRA</span></h1>", unsafe_allow_html=True)
         tabs = st.tabs(["🎯 WEB3 & MARKNADSSKANNER", "📊 INSIDER ANALYS", "🛠️ ADMIN PANEL"])
@@ -182,7 +175,6 @@ if st.session_state.auth['in']:
         with tabs[0]:
             st.subheader("RSI Algoritm & Smarta Kontrakt")
             
-            # Förberedd för Web3 & Marknad
             standard = ["BTC-USD", "ETH-USD", "SOL-USD", "LINK-USD", "AVAX-USD", "ADA-USD", "MSTR", "COIN", "TSLA", "AAPL", "MSFT", "NVDA", "INVE-B.ST", "VOLV-B.ST", "SEB-A.ST"]
             saved = load_user_tickers(st.session_state.auth['user'])
             alla_alternativ = list(set(standard + saved))
@@ -213,11 +205,12 @@ if st.session_state.auth['in']:
                                 delta = d.diff(); g = delta.where(delta > 0, 0).rolling(14).mean(); l = -delta.where(delta < 0, 0).rolling(14).mean()
                                 rsi = 100 - (100 / (1 + (g / l))).iloc[-1]
                                 res.append({"Ticker": t, "RSI": round(rsi, 1), "Signal": "🔥 KÖP" if rsi < 35 else ("🚨 SÄLJ" if rsi > 70 else "😴 VÄNTA")})
-                        except: continue
+                        except Exception: 
+                            continue # Ignorera tyst de tickers som Yahoo blockerar
                 if res: 
                     st.dataframe(pd.DataFrame(res).sort_values("RSI"), use_container_width=True, hide_index=True)
                 else: 
-                    st.error("Kunde inte hämta data. Kontrollera nätverket.")
+                    st.warning("Kunde inte hämta data för dessa tillgångar. Yahoo Finance kan ha en tillfällig blockad (Rate Limit).")
 
         # FLIK 2: ANALYS
         with tabs[1]:
@@ -232,11 +225,16 @@ if st.session_state.auth['in']:
             with col_r:
                 search = st.text_input("Snabbsök Graf:", "INVE-B.ST")
                 if search:
-                    h = yf.Ticker(search).history(period="6mo")
-                    if not h.empty:
-                        fig = go.Figure(data=[go.Scatter(x=h.index, y=h['Close'], line=dict(color='#00ffcc', width=2))])
-                        fig.update_layout(template="plotly_dark", height=350, margin=dict(l=0,r=0,t=0,b=0))
-                        st.plotly_chart(fig, use_container_width=True)
+                    try:
+                        h = yf.Ticker(search).history(period="6mo")
+                        if not h.empty:
+                            fig = go.Figure(data=[go.Scatter(x=h.index, y=h['Close'], line=dict(color='#00ffcc', width=2))])
+                            fig.update_layout(template="plotly_dark", height=350, margin=dict(l=0,r=0,t=0,b=0))
+                            st.plotly_chart(fig, use_container_width=True)
+                        else:
+                            st.warning("Kunde inte hitta prisdata för den tickern.")
+                    except Exception:
+                        st.warning("Yahoo Finance blockerar tillfälligt hämtning av grafer (Rate Limit). Ge det någon minut och försök igen.")
 
         # FLIK 3: ADMIN
         with tabs[2]:
