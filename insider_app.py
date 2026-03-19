@@ -14,7 +14,6 @@ st.markdown("""
     h1, h2, h3 { color: #00ffcc !important; font-family: 'Courier New', Courier, monospace; letter-spacing: 1px; }
     .stButton>button { background-color: transparent !important; color: #00ffcc !important; border: 1px solid #00ffcc !important; border-radius: 4px; transition: all 0.2s; }
     .stButton>button:hover { background-color: #00ffcc !important; color: #000000 !important; transform: scale(1.02); }
-    .stTextInput>div>div>input { background-color: #161b22; color: white; border: 1px solid #30363d; }
 </style>
 """, unsafe_allow_html=True)
 
