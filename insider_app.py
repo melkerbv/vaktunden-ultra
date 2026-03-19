@@ -16,7 +16,17 @@ def check_hashes(password, hashed_text):
 def init_db():
     conn = sqlite3.connect('vakthunden.db')
     c = conn.cursor()
-    c.execute("CREATE TABLE IF NOT EXISTS users(username TEXT PRIMARY KEY, email TEXT, password TEXT, role TEXT DEFAULT 'user', is_premium INTEGER DEFAULT 0, is_verified INTEGER DEFAULT 1, verification_code TEXT)")
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS users(
+            username TEXT PRIMARY KEY, 
+            email TEXT, 
+            password TEXT, 
+            role TEXT DEFAULT 'user', 
+            is_premium INTEGER DEFAULT 0, 
+            is_verified INTEGER DEFAULT 1, 
+            verification_code TEXT
+        )
+    """)
     c.execute("CREATE TABLE IF NOT EXISTS user_tickers(username TEXT, ticker TEXT)")
     conn.commit()
     conn.close()
@@ -51,38 +61,5 @@ def hämta_insider_data(dagar):
         df = pd.read_csv(io.StringIO(r.content.decode('utf-16le')), sep=';')
         df.columns = df.columns.str.strip()
         
-        def cln(v): return float(re.sub(r'[^\d,]', '', str(v)).replace(',', '.')) if pd.notna(v) else 0
-        df['Kurs_Num'] = df['Pris'].apply(cln)
-        df['Volym_Num'] = df['Volym'].apply(cln)
-        df['Kurs'] = df['Kurs_Num'].apply(lambda x: f"{x:,.2f} kr".replace(',', ' '))
-        df['Värde'] = (df['Volym_Num'] * df['Kurs_Num']).apply(lambda x: f"{x:,.0f} kr".replace(',', ' '))
-        
-        return df.sort_values('Publiceringsdatum', ascending=False)
-    except: 
-        return pd.DataFrame()
-
-# --- 2. SESSION HANTERING ---
-if 'auth' not in st.session_state:
-    st.session_state.auth = {'in': False, 'user': None, 'role': 'user', 'prem': False}
-
-# --- 3. SIDOPANEL ---
-with st.sidebar:
-    st.title("🐺 VAKTHUNDEN")
-    if not st.session_state.auth['in']:
-        action = st.radio("Välj alternativ:", ["Logga in", "Skapa konto"], index=0)
-        st.divider()
-        u = st.text_input("Användarnamn").strip()
-        
-        if action == "Skapa konto":
-            em = st.text_input("E-post").strip()
-            p1 = st.text_input("Lösenord", type="password")
-            if st.button("Skapa Mitt Konto", type="primary"):
-                if u and em and p1:
-                    conn = sqlite3.connect('vakthunden.db')
-                    c = conn.cursor()
-                    c.execute("SELECT username FROM users WHERE username = ?", (u,))
-                    if c.fetchone():
-                        st.error("Namnet är taget. Välj ett annat eller logga in.")
-                    else:
-                        c.execute("SELECT COUNT(*) FROM users")
-                        role = 'admin' if c.fetchone()[0] == 0 else
+        def cln(v): 
+            return float(re.sub(r'[^\d
