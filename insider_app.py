@@ -5,7 +5,39 @@ import plotly.graph_objects as go
 from datetime import datetime as dt, timedelta as td
 
 # --- 1. SÄKERHET & DATABAS ---
-st.set_page_config(page_title="Vakthunden ULTRA", layout="wide")
+# --- DESIGN & TEMA ---
+st.markdown("""
+<style>
+    /* Bakgrund och text */
+    .stApp {
+        background-color: #0b0f19;
+    }
+    h1, h2, h3 {
+        color: #00ffcc !important;
+        font-family: 'Courier New', Courier, monospace;
+        letter-spacing: 1px;
+    }
+    /* Snyggare knappar */
+    .stButton>button {
+        background-color: transparent !important;
+        color: #00ffcc !important;
+        border: 1px solid #00ffcc !important;
+        border-radius: 4px;
+        transition: all 0.2s;
+    }
+    .stButton>button:hover {
+        background-color: #00ffcc !important;
+        color: #000000 !important;
+        transform: scale(1.02);
+    }
+    /* Mörkare inmatningsfält */
+    .stTextInput>div>div>input {
+        background-color: #161b22;
+        color: white;
+        border: 1px solid #30363d;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 def make_hashes(password):
     return hashlib.sha256(str.encode(password)).hexdigest()
