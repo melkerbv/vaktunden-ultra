@@ -4,6 +4,7 @@ import requests, io, yfinance as yf, sqlite3, hashlib, re, random
 import plotly.graph_objects as go
 from datetime import datetime as dt, timedelta as td
 
+# --- 1. SÄKERHET & DATABAS ---
 st.set_page_config(page_title="Vakthunden ULTRA", layout="wide")
 
 def make_hashes(password): 
@@ -49,6 +50,38 @@ def save_user_tickers(username, tickers):
     conn.commit()
     conn.close()
 
+@st.cache_data(ttl=300)
+def get_market_overview():
+    tickers = {"OMXS30": "^OMX", "NASDAQ": "^IXIC", "S&P 500": "^GSPC", "Bitcoin": "BTC-USD"}
+    results = {}
+    for name, ticker in tickers.items():
+        try:
+            t = yf.Ticker(ticker)
+            hist = t.history(period="5d")
+            if len(hist) >= 2:
+                current = hist['Close'].iloc[-1]
+                prev = hist['Close'].iloc[-2]
+                diff = current - prev
+                pct = (diff / prev) * 100
+                results[name] = {"val": current, "pct": pct}
+            else:
+                results[name] = None
+        except:
+            results[name] = None
+    return results
+
+@st.cache_data(ttl=900)
+def get_news():
+    try:
+        res = yf.Ticker("SPY").news
+        valid_news = []
+        for n in res[:5]:
+            if 'title' in n and 'link' in n:
+                valid_news.append(n)
+        return valid_news
+    except:
+        return []
+
 @st.cache_data(ttl=900)
 def hämta_insider_data(dagar):
     try:
@@ -82,9 +115,11 @@ def hämta_insider_data(dagar):
     except: 
         return pd.DataFrame()
 
+# --- 2. SESSION HANTERING ---
 if 'auth' not in st.session_state:
     st.session_state.auth = {'in': False, 'user': None, 'role': 'user', 'prem': False}
 
+# --- 3. SIDOPANEL ---
 with st.sidebar:
     st.title("🐺 VAKTHUNDEN")
     if not st.session_state.auth['in']:
@@ -140,29 +175,48 @@ with st.sidebar:
             st.session_state.auth = {'in': False, 'user': None, 'role': 'user', 'prem': False}
             st.rerun()
 
+# --- 4. HUVUDINNEHÅLL (INLOGGAD) ---
 if st.session_state.auth['in']:
     st.title("VAKTHUNDEN ULTRA")
     
     tabs = st.tabs(["🏠 ÖVERSIKT", "🎯 MARKNADSSKANNER", "📊 INSIDER ANALYS", "🛠️ ADMIN PANEL"])
 
+    # FLIK 0: ÖVERSIKT (KUNDFOKUSERAD)
     with tabs[0]:
-        st.subheader(f"Välkommen till kommandocentralen, {st.session_state.auth['user']}. 🐺")
-        st.write("Här har du en snabb överblick över din terminal och systemets status.")
-        
-        st.write("") 
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Systemstatus", "ONLINE", "Optimerad")
-        c2.metric("Aktiv Behörighet", st.session_state.auth['role'].upper(), "Verifierad")
-        c3.metric("Databasanslutning", "AKTIV", "Lokal SQLite")
+        st.subheader(f"Välkommen, {st.session_state.auth['user']}. 🐺")
+        st.write("Din dagliga överblick över marknadsläget och de senaste rörelserna.")
         
         st.write("---")
-        st.markdown("### Tillgängliga Moduler")
-        st.markdown("**🎯 MARKNADSSKANNER:** Kör vår RSI-algoritm på dina utvalda tillgångar.")
-        st.markdown("**📊 INSIDER ANALYS:** Följ de stora pengarna via Finansinspektionen.")
+        st.markdown("### 🌍 Globala Index & Tillgångar")
         
-        if st.session_state.auth['role'] == 'admin':
-            st.markdown("**🛠️ ADMIN PANEL:** Full kontroll över användardatabasen.")
+        with st.spinner("Hämtar live-kurser..."):
+            m_data = get_market_overview()
+            
+        c1, c2, c3, c4 = st.columns(4)
+        
+        def disp_metric(col, title, data, pre=""):
+            if data:
+                col.metric(title, f"{pre}{data['val']:,.2f}", f"{data['pct']:+.2f}%")
+            else:
+                col.metric(title, "N/A", "N/A")
+                
+        disp_metric(c1, "OMXS30 (Sverige)", m_data.get("OMXS30"))
+        disp_metric(c2, "NASDAQ (Teknik)", m_data.get("NASDAQ"))
+        disp_metric(c3, "S&P 500 (USA)", m_data.get("S&P 500"))
+        disp_metric(c4, "Bitcoin (Web3)", m_data.get("Bitcoin"), "$")
+        
+        st.write("---")
+        st.markdown("### 📰 Senaste Marknadsnyheterna")
+        
+        with st.spinner("Laddar nyhetsflöde..."):
+            news_items = get_news()
+            if news_items:
+                for item in news_items:
+                    st.markdown(f"🔹 **[{item['title']}]({item['link']})**")
+            else:
+                st.info("Inga nyheter kunde hämtas just nu.")
 
+    # FLIK 1: SKANNER
     with tabs[1]:
         st.subheader("Algoritmisk Marknadsbevakning (RSI)")
         standard = [
@@ -216,6 +270,7 @@ if st.session_state.auth['in']:
             else: 
                 st.warning("Rate limit aktiv från Yahoo Finance.")
 
+    # FLIK 2: ANALYS
     with tabs[2]:
         st.subheader("Svenskt Insider Flow")
         col_l, col_r = st.columns([2, 1])
@@ -231,3 +286,9 @@ if st.session_state.auth['in']:
                 st.info("Ingen data från Finansinspektionen just nu.")
         with col_r:
             search = st.text_input("Snabbsök Graf:", "INVE-B.ST")
+            if search:
+                try:
+                    h = yf.Ticker(search).history(period="6mo")
+                    if not h.empty:
+                        fig = go.Figure(data=[go.Scatter(x=h.index, y=h['Close'])])
+                        fig.update
